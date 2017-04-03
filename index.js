@@ -4,6 +4,10 @@ const cf = new AWS.CloudFormation({ apiVersion: "2010-05-15" });
 const ecs = new AWS.ECS({ apiVersion: "2014-11-13" });
 const ec2 = new AWS.EC2({ apiVersion: "2016-11-15" });
 
+/**
+ * Get the physical service name from the service stack name
+ * and optional specific logical service name
+ */
 const getServiceName = function (serviceStackName, serviceName) {
 	return new Promise(function (resolve, reject) {
 		const params = { StackName: serviceStackName };
@@ -33,6 +37,11 @@ const getServiceName = function (serviceStackName, serviceName) {
 	});
 };
 
+/**
+ * Get the ECS cluster stack name using the service stack name
+ * and the conventional ClusterStackName service stack parameter
+ * If service stack doesn't provide this, cluster stack name must be passed from CLI
+ */
 const getClusterStackName = function (serviceStackName) {
 	return new Promise(function (resolve, reject) {
 		cf.describeStacks({ StackName: serviceStackName }, function (err, data) {
@@ -60,6 +69,9 @@ const getClusterStackName = function (serviceStackName) {
 	});
 };
 
+/**
+ * Gets the physical cluster name from the cluster stack
+ */
 const getClusterName = function (clusterStackName) {
 	return new Promise(function (resolve, reject) {
 		cf.describeStackResources({
@@ -77,10 +89,17 @@ const getClusterName = function (clusterStackName) {
 	});
 };
 
-module.exports = function (serviceStackName, serviceName, clusterStackName, containerPorts, ipv6) {
+/**
+ * Main function
+ */
+module.exports = function (serviceStackName, serviceName, clusterStackName, containerPorts, ipv6, startingPort) {
+	
+	// Get physical cluster name from either cluster stack name
+	// or conventional stack parameter of service stack
 	const clusterName = clusterStackName && getClusterName(clusterStackName)
 		|| getClusterStackName(serviceStackName).then(getClusterName);
 	
+	// List tasks for the service on the cluster (done to require fewer permissions)
 	const taskList = Promise.all([
 		getServiceName(serviceStackName, serviceName), 
 		clusterName
@@ -99,10 +118,13 @@ module.exports = function (serviceStackName, serviceName, clusterStackName, cont
 		return data.taskArns;
 	});
 	
+	// Final structure of SSH commands to output
 	const containerInstances = new Map();
 	
 	return Promise.all([clusterName, taskList])
 	.then(function (v) { const clusterName = v[0], taskList = v[1];
+	
+		// Task details
 		return new Promise(function (resolve, reject) {
 			ecs.describeTasks({
 				cluster: clusterName,
@@ -112,15 +134,25 @@ module.exports = function (serviceStackName, serviceName, clusterStackName, cont
 			});
 		})
 		.then(function (data) {
+			
+			// Service may be running multiple copies of the task
 			for (let i = 0; i < data.tasks.length; i++) {
 				let task = data.tasks[i];
+				
+				// Multiple containers in task
 				for (let j = 0; j < task.containers.length; j++) {
 					let container = task.containers[j];
 					let containerName = task.overrides.containerOverrides[j].name;
+					
+					// If it has network bindings
 					if (Array.isArray(container.networkBindings)) {
 						for (let k = 0; k < container.networkBindings.length; k++) {
 							let binding = container.networkBindings[k];
+							
+							// If we're limiting container ports to return
 							if (containerPorts && containerPorts.has(binding.containerPort) || !containerPorts) {
+								
+								// Track by container name container instance it's running on
 								let containerInstanceRequest = containerInstances.has(task.containerInstanceArn) && containerInstances.get(task.containerInstanceArn)
 									|| { ports: new Map(), byHostPort: new Map() };
 								containerInstanceRequest.ports.set(binding.containerPort, binding.hostPort);
@@ -135,6 +167,7 @@ module.exports = function (serviceStackName, serviceName, clusterStackName, cont
 				}
 			}
 			
+			// Get information about the container instances stuff is running on
 			return new Promise(function (resolve, reject) {
 				ecs.describeContainerInstances({
 					containerInstances: Array.from(containerInstances.keys()),
@@ -146,12 +179,15 @@ module.exports = function (serviceStackName, serviceName, clusterStackName, cont
 		})
 	})
 	.then(function (data) {
+		
+		// Set EC2 instance ID on the data structure
 		for (let i = 0; i < data.containerInstances.length; i++) {
 			let containerInstance = data.containerInstances[i];
 			containerInstances.get(containerInstance.containerInstanceArn).instanceId =
 				containerInstance.ec2InstanceId;
 		}
 		
+		// EC2 data to get public IPs
 		return new Promise(function (resolve, reject) {
 			ec2.describeInstances({
 				InstanceIds: Array.from(containerInstances.values())
@@ -162,6 +198,8 @@ module.exports = function (serviceStackName, serviceName, clusterStackName, cont
 		});
 	})
 	.then(function (data) {
+		
+		// Look for public IPs in the DescribeInstances data structure
 		const instanceIps = new Map();
 		for (let i = 0; i < data.Reservations.length; i++) {
 			let r = data.Reservations[i];
@@ -182,7 +220,8 @@ module.exports = function (serviceStackName, serviceName, clusterStackName, cont
 			}
 		}
 		
-		var port = 49152;
+		// Print out ports for each instance and what container ports they point to
+		var port = startingPort || 49152;
 		containerInstances.forEach(function (v, k, m) {
 			v.ipAddress = instanceIps.get(v.instanceId);
 			

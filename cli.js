@@ -19,7 +19,8 @@ cmd
 	.option("-s, --service-name [value]", "The service to get containers for")
 	.option("-c, --cluster-stack-name [value]", "Which cluster stack to get container instances for")
 	.option("-6, --ipv6", "Attempt to get IPv6 addresses for the container instances")
+	.option("--starting-port [value]", "Start of port range to use for local side ofSSH port forwarding")
 	.parse(process.argv);
 
-f(cmd.args[0], cmd.serviceName, cmd.clusterStackName, cmd.containerPorts, cmd.ipv6)
+f(cmd.args[0], cmd.serviceName, cmd.clusterStackName, cmd.containerPorts, cmd.ipv6, cmd.startingPort)
 .then(null, function (err) { console.error(err); });
