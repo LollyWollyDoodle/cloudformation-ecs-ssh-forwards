@@ -1,0 +1,20 @@
+{
+  "name": "cloudformation-ecs-ssh-forwards",
+  "version": "0.1.0",
+  "description": "Output ssh commands that forward to ports on ECS container instances",
+  "main": "index.js",
+  "bin": "./cli.js",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/LollyWollyDoodle/cloudformation-ecs-ssh-forwards.git"
+  },
+  "license": "UNLICENSED",
+  "bugs": {
+    "url": "https://github.com/LollyWollyDoodle/cloudformation-ecs-ssh-forwards/issues"
+  },
+  "homepage": "https://github.com/LollyWollyDoodle/cloudformation-ecs-ssh-forwards#readme",
+  "dependencies": {
+    "aws-sdk": "^2.26.0",
+    "commander": "^2.9.0"
+  }
+}
